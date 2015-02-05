@@ -17,8 +17,10 @@
     extraData: {},
     maxFileSize: 0,
     allowedTypes: '*',
+    extendFileTypes:'*',
     extFilter: null,
     dataType: null,
+    single:false,
     fileName: 'file',
     onInit: function(){},
     onFallbackMode: function() {message},
@@ -30,7 +32,8 @@
     onUploadError: function(id, message){},
     onFileTypeError: function(file){},
     onFileSizeError: function(file){},
-    onFileExtError: function(file){}
+    onFileExtError: function(file){},
+    onFileNumberError:function(file){}
   };
 
   var DmUploader = function(element, options)
@@ -100,15 +103,32 @@
     var widget = this;
 
     widget.queue = new Array();
+    widget.isCancel = false;   //Cancel upload action flag
     widget.queuePos = -1;
     widget.queueRunning = false;
 
     // -- Drag and drop event
     widget.element.on('drop', function (evt){
       evt.preventDefault();
+      widget.element.removeClass("drag-over");
       var files = evt.originalEvent.dataTransfer.files;
 
       widget.queueFiles(files);
+    });
+
+    // --When Dragleave and Dragenter file,change the target status  
+    widget.element.on("dragleave",function(evt){
+      evt.preventDefault();
+      widget.element.removeClass("drag-over");
+    });
+
+    widget.element.on('dragenter', function (evt){
+      evt.preventDefault();
+      widget.element.addClass("drag-over");
+    });
+
+    $(document).find('span[class=cancelUpload]').on('click', function(evt){
+      widget.cancelUpload();
     });
 
     //-- Optional File input to make a clickable area
@@ -131,6 +151,15 @@
     {
       var file = files[i];
 
+      // Check file numbers
+      if((this.settings.single) &&
+          (files.length > 1)){
+
+        this.settings.onFileNumberError.call(this.element, file);
+
+        continue;
+      }
+
       // Check file size
       if((this.settings.maxFileSize > 0) &&
           (file.size > this.settings.maxFileSize)){
@@ -140,13 +169,14 @@
         continue;
       }
 
-      // Check file type
-      if((this.settings.allowedTypes != '*') &&
-          !file.type.match(this.settings.allowedTypes)){
-
-        this.settings.onFileTypeError.call(this.element, file);
-
-        continue;
+      // Check file type  some file havan't allowedTypes,eg: *.apk
+      var type = file.name.substring(file.name.lastIndexOf('.'),file.name.length);
+      if((this.settings.extendFileTypes != type.toLowerCase())){
+        if((this.settings.allowedTypes != '*') &&
+            !file.type.match(this.settings.allowedTypes)){
+          this.settings.onFileTypeError.call(this.element, file);
+          continue;
+        }
       }
 
       // Check file extension
@@ -230,16 +260,42 @@
       forceSync: false,
       xhr: function(){
         var xhrobj = $.ajaxSettings.xhr();
+        //Setup all the var
+        var timer = new Date();
+        var time = timer.getTime();
+        var bytesLoaded = 0;
         if(xhrobj.upload){
           xhrobj.upload.addEventListener('progress', function(event) {
             var percent = 0;
+            var speed = 0;
             var position = event.loaded || event.position;
             var total = event.total || e.totalSize;
             if(event.lengthComputable){
               percent = Math.ceil(position / total * 100);
+              var newTimer = new Date();
+              var newTime = newTimer.getTime();
+              var lapsedTime = newTime - time;
+              var lapsedBytes = event.loaded - bytesLoaded;
+              bytesLoaded = event.loaded;
+              // Calculate the average speed
+              var suffix = 'KB/s';
+              var mbs = 0;
+              var kbs = (lapsedBytes / 1024) / (lapsedTime / 1000);
+              kbs = Math.floor(kbs * 10) / 10;
+              if (kbs > 1000) {
+                mbs = (kbs * .001);
+                mbs = Math.floor(mbs);
+                suffix = 'MB/s';
+                speed = mbs + suffix;
+              } else {
+                speed = kbs + suffix;
+              }
             }
-
-            widget.settings.onUploadProgress.call(widget.element, widget.queuePos, percent);
+            if(widget.isCancel){
+              xhrobj.abort();
+              widget.isCancel = false;
+            }
+            widget.settings.onUploadProgress.call(widget.element, widget.queuePos, percent, speed);
           }, false);
         }
 
@@ -248,13 +304,18 @@
       success: function (data, message, xhr){
         widget.settings.onUploadSuccess.call(widget.element, widget.queuePos, data);
       },
-      error: function (xhr, status, errMsg){
-        widget.settings.onUploadError.call(widget.element, widget.queuePos, errMsg);
+      error: function (data, status, xhr){
+        widget.settings.onUploadError.call(widget.element, widget.queuePos, data);
       },
       complete: function(xhr, textStatus){
         widget.processQueue();
       }
     });
+  }
+
+  DmUploader.prototype.cancelUpload = function(){
+    var widget = this;
+    widget.isCancel = true;
   }
 
   $.fn.dmUploader = function(options){
@@ -267,6 +328,7 @@
 
   // -- Disable Document D&D events to prevent opening the file on browser when we drop them
   $(document).on('dragenter', function (e) { e.stopPropagation(); e.preventDefault(); });
-  $(document).on('dragover', function (e) { e.stopPropagation(); e.preventDefault(); });
+  $(document).on('dragleave', function (e) { e.stopPropagation(); e.preventDefault(); });
+  $(document).on('dragover', function (e) { e.stopPropagation(); e.preventDefault();});
   $(document).on('drop', function (e) { e.stopPropagation(); e.preventDefault(); });
 })(jQuery);
